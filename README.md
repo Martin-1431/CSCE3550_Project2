@@ -1,110 +1,87 @@
-# JWKS Server (educational project)
+# SQLite-backed JWKS Server
 
-A tiny RESTful server, in Python + Flask, that shows how JWKS-based JWT
-verification works:
+A Python/Flask server that demonstrates JWKS-based JWT verification with
+SQLite-backed RSA private-key storage.
 
-- Generates RSA key pairs, each with a unique `kid` and an expiry.
-- `GET /.well-known/jwks.json` — publishes only the **unexpired** public keys.
-- `POST /auth` — mocks a login and returns a JWT signed with the current
-  valid key (`kid` is in the JWT header).
-- `POST /auth?expired` — returns a JWT signed with an **expired** key and an
-  expired `exp` claim, so you can test that expired tokens/keys are rejected.
+- `GET /.well-known/jwks.json` publishes only unexpired public keys.
+- `POST /auth` returns a JWT signed with a valid private key.
+- `POST /auth?expired` returns a JWT signed with an expired private key and
+  an expired `exp` claim.
 
-No real authentication happens — any POST to `/auth` succeeds. This is by
-design for the assignment; a real system would verify credentials, use a
-proper key-management/HSM setup, and rotate keys.
+Authentication is intentionally mocked: every POST to `/auth` succeeds,
+including requests with the assignment's JSON username/password payload or
+HTTP Basic authentication.
 
-## Requirements
+## Requirements and startup
 
 - Python 3.9+
+- Install dependencies with `pip install -r requirements.txt`.
+- Start with `python app.py`.
 
-## Quick start
+The server listens on `http://localhost:8080`. It creates
+`totally_not_my_privateKeys.db` in the current working directory at startup.
+The `keys` table uses the required schema:
 
-```bash
-# 1. Get the code, then from the project folder:
-pip install -r requirements.txt
-
-# 2. Run the server
-python app.py
+```sql
+CREATE TABLE IF NOT EXISTS keys(
+    kid INTEGER PRIMARY KEY AUTOINCREMENT,
+    key BLOB NOT NULL,
+    exp INTEGER NOT NULL
+);
 ```
 
-The server listens on **http://localhost:8080**.
+The application ensures the database contains at least one unexpired and one
+expired key. Existing keys persist across restarts; if all valid keys expire,
+a replacement is generated before the next normal JWT is signed.
 
-Try it out (in another terminal):
+## Try the endpoints
 
-```bash
-# Public keys (JWKS)
+```powershell
+# Public keys
 curl.exe http://localhost:8080/.well-known/jwks.json
 
-# Get a valid JWT
+# Valid JWT
 curl.exe -X POST http://localhost:8080/auth
 
-# Get an expired JWT (signed with an expired key)
+# Expired JWT
 curl.exe -X POST "http://localhost:8080/auth?expired"
 ```
 
-On Windows PowerShell, use `curl.exe` as shown above because `curl` is an
-alias for PowerShell's `Invoke-WebRequest`, which does not support curl's
-`-X` option. The native PowerShell equivalent for the POST request is:
+The `/auth` response is the raw JWT as plain text, as expected by the project
+blackbox test client.
+
+## SQLite security and key format
+
+Python's standard-library `sqlite3` module opens the database. SQL values,
+including expiry timestamps, are bound through `?` placeholders, and the
+expiry comparison is selected from fixed query strings rather than request
+input. Private keys are serialized as unencrypted PKCS8 PEM bytes in the
+`key` BLOB column and deserialized only when needed for signing or JWKS
+generation. The JWT header's string `kid` corresponds to the database's
+integer primary key.
+
+Private keys are not encrypted at rest. This storage approach is only for the
+class assignment; production systems should use protected key management and
+real credential validation.
+
+## Tests and lint
+
+Run the test suite with coverage (the configured minimum is 80%):
 
 ```powershell
-Invoke-WebRequest -Method POST -Uri "http://localhost:8080/auth?expired"
+python -m pytest
 ```
 
-The `/auth` response body is the raw JWT string (plain text), which is what
-common blackbox test clients for this assignment expect.
+Run lint checks with:
 
-## Project layout
-
-```
-jwks_server/
-├── app.py            # the server: key generation + the two endpoints
-├── test_app.py        # pytest suite (unit + integration tests)
-├── requirements.txt    # pinned dependencies
-├── pytest.ini         # runs coverage automatically, fails if under 80%
-└── .flake8            # lint configuration
+```powershell
+python -m flake8 app.py test_app.py
 ```
 
-Everything lives in `app.py` on purpose — the assignment is small, so one
-well-commented, well-organized file is easier to read than several thin
-modules. Functions are separated by concern (key generation, encoding
-helpers, routes) and documented with docstrings.
+Tests use a separate temporary database and cover persistence, expiry
+selection, endpoint behavior, JWKS/public-key consistency, and JWT signatures.
 
-## Running the tests
+## Submission evidence
 
-```bash
-pytest
-```
-
-This runs the full suite and prints a coverage report (configured in
-`pytest.ini` to fail if coverage drops below 80%; the suite currently hits
-100%). Run `pytest -v` for per-test output.
-
-## Linting
-
-```bash
-flake8 app.py test_app.py
-```
-
-## How the key/expiry logic works
-
-- At startup, the server generates two RSA key pairs:
-  - one **valid** key (`kid` = `VALID_KID`), expiring 1 hour from now
-  - one **expired** key (`kid` = `EXPIRED_KID`), whose expiry is already
-    5 minutes in the past
-- `GET /.well-known/jwks.json` filters `KEYS` down to only entries whose
-  expiry is still in the future, and returns their public components
-  (`n`, `e`) alongside `kid`, `kty`, `alg`, and `use` — standard JWK fields.
-- `POST /auth` picks the valid key by default. If the query string contains
-  `expired` (e.g. `/auth?expired`, with or without a value), it instead
-  signs with the expired key and sets `iat`/`exp` in the past, so the
-  resulting JWT is both signed by a "retired" key and already expired.
-- Every issued JWT carries its signing key's `kid` in the JWT header, so a
-  verifier can look up the matching key in the JWKS response by `kid`.
-
-## Notes / limitations (by design, for a class project)
-
-- Keys are stored in memory only — they reset each time the server restarts.
-- No real authentication/credential checking on `/auth`.
-- Only two keys are ever generated (one valid, one expired); the server
-  isn't meant to run indefinitely or rotate keys.
+- `gradebot_project2.png` shows the Project 2 Gradebot rubric output.
+- `test_coverage.png` shows the passing pytest run and measured coverage.

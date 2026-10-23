@@ -6,3 +6,4 @@ htmlcov/
 .venv/
 venv/
 env/
+totally_not_my_privateKeys.db
